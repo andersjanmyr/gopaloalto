@@ -58,6 +58,7 @@ func main() {
 
 	fmt.Printf("start reading camera device: %v\n", deviceID)
 	for {
+		faceDetected := false
 		if ok := webcam.Read(&img); !ok {
 			fmt.Printf("cannot read device %d\n", deviceID)
 			return
@@ -69,10 +70,13 @@ func main() {
 		// detect faces
 		rects := classifier.DetectMultiScale(img)
 		if len(rects) > 0 {
+			name := "Unknown"
 			fmt.Printf("found %d faces\n", len(rects))
-			name, err := detectFace(img)
-			if err != nil {
-				fmt.Println(err)
+			if !faceDetected {
+				name, err = detectFace(img)
+				if err != nil {
+					fmt.Println(err)
+				}
 			}
 			// draw a rectangle around each face on the original image,
 			// along with text identifying as "Human"
@@ -122,12 +126,10 @@ func detectFace(img gocv.Mat) (string, error) {
 		CollectionId:       aws.String("gopaloalto"),
 		FaceMatchThreshold: &threshold,
 	})
-	fmt.Printf("Err: %s\n", err)
-	fmt.Printf("Out: %#v\n", output)
-	os.Exit(1)
 	if err != nil {
 		return "", err
 	}
 
-	return "Anders Janmyr", nil
+	fmt.Println(output.FaceMatches[0])
+	return *output.FaceMatches[0].Face.ExternalImageId, nil
 }
