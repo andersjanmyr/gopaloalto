@@ -8,8 +8,10 @@ import (
 	"image/color"
 	"image/png"
 	"io/ioutil"
+	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
@@ -18,11 +20,20 @@ import (
 	"gocv.io/x/gocv"
 )
 
+var name string
+var rekognitionService *rekognition.Rekognition
+
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Println("How to run:\n\tfacedetect [camera ID] [classifier XML file]")
 		return
 	}
+
+	sess := session.Must(session.NewSession())
+	config := &aws.Config{
+		Region: aws.String(endpoints.UsWest2RegionID),
+	}
+	rekognitionService = rekognition.New(sess, config)
 
 	// parse args
 	deviceID, _ := strconv.Atoi(os.Args[1])
@@ -41,8 +52,8 @@ func main() {
 	defer window.Close()
 
 	// prepare image matrix
-	img := gocv.NewMat()
-	defer img.Close()
+	mat := gocv.NewMat()
+	defer mat.Close()
 
 	// color for the rect when faces detected
 	blue := color.RGBA{0, 0, 255, 0}
@@ -57,48 +68,72 @@ func main() {
 	}
 
 	fmt.Printf("start reading camera device: %v\n", deviceID)
+	nameChan := make(chan string)
+	matChan := make(chan gocv.Mat)
+	go startDetectFace(matChan, nameChan)
+	go nameLoop(nameChan)
 	for {
-		faceDetected := false
-		if ok := webcam.Read(&img); !ok {
+		if ok := webcam.Read(&mat); !ok {
 			fmt.Printf("cannot read device %d\n", deviceID)
 			return
 		}
-		if img.Empty() {
+		if mat.Empty() {
 			continue
 		}
 
 		// detect faces
-		rects := classifier.DetectMultiScale(img)
+		rects := classifier.DetectMultiScale(mat)
 		if len(rects) > 0 {
-			name := "Unknown"
 			fmt.Printf("found %d faces\n", len(rects))
-			if !faceDetected {
-				name, err = detectFace(img)
-				if err != nil {
-					fmt.Println(err)
-				}
+			select {
+			case matChan <- mat:
+			default:
 			}
-			// draw a rectangle around each face on the original image,
-			// along with text identifying as "Human"
 			for _, r := range rects {
-				gocv.Rectangle(&img, r, blue, 3)
-
+				gocv.Rectangle(&mat, r, blue, 3)
 				size := gocv.GetTextSize(name, gocv.FontHersheyPlain, 1.2, 2)
 				pt := image.Pt(r.Min.X+(r.Min.X/2)-(size.X/2), r.Min.Y-2)
-				gocv.PutText(&img, name, pt, gocv.FontHersheyPlain, 1.2, blue, 2)
+				gocv.PutText(&mat, name, pt, gocv.FontHersheyPlain, 1.2, blue, 2)
 			}
 		}
 
-		// show the image in the window, and wait 1 millisecond
-		window.IMShow(img)
-		if window.WaitKey(5) >= 0 {
+		window.IMShow(mat)
+		if window.WaitKey(10) >= 0 {
 			break
 		}
 	}
 }
 
-func detectFace(img gocv.Mat) (string, error) {
-	frame, err := img.ToImage()
+func nameLoop(nameChan <-chan string) {
+	for {
+		select {
+		case name = <-nameChan:
+			fmt.Printf("Read name from chan: %s\n", name)
+		case <-time.After(9 * time.Second):
+			fmt.Println("Timeout name from chan")
+			name = "Unknown"
+		}
+	}
+}
+
+func startDetectFace(matrixChan <-chan gocv.Mat, nameChan chan<- string) {
+	for {
+		mat := <-matrixChan
+		fmt.Println("Read mat from chan")
+		name, err := detectFace(mat)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		if name == "" {
+			name = "Unknown"
+		}
+		nameChan <- name
+	}
+}
+
+func detectFace(mat gocv.Mat) (string, error) {
+	frame, err := mat.ToImage()
 	if err != nil {
 		return "", err
 	}
@@ -110,26 +145,28 @@ func detectFace(img gocv.Mat) (string, error) {
 
 	ctx := context.Background()
 
-	sess := session.Must(session.NewSession())
-	config := &aws.Config{
-		Region: aws.String(endpoints.UsWest2RegionID),
-	}
 	bytes, err := ioutil.ReadAll(buffer)
 	if err != nil {
 		return "", err
 	}
-	rekognitionService := rekognition.New(sess, config)
 	image := rekognition.Image{Bytes: []byte(bytes)}
 	threshold := 0.7
+	start := time.Now()
+
 	output, err := rekognitionService.SearchFacesByImageWithContext(ctx, &rekognition.SearchFacesByImageInput{
 		Image:              &image,
 		CollectionId:       aws.String("gopaloalto"),
 		FaceMatchThreshold: &threshold,
 	})
+	elapsed := time.Since(start)
+	log.Printf("Service call took %s", elapsed)
 	if err != nil {
 		return "", err
 	}
 
 	fmt.Println(output.FaceMatches[0])
+	if len(output.FaceMatches) < 1 {
+		return "", nil
+	}
 	return *output.FaceMatches[0].Face.ExternalImageId, nil
 }
