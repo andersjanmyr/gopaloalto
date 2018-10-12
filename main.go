@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"io/ioutil"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -22,10 +24,17 @@ import (
 
 var name string
 var rekognitionService *rekognition.Rekognition
+var slackUrl string
 
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Println("How to run:\n\tfacedetect [camera ID] [classifier XML file]")
+		return
+	}
+	slackUrl = os.Getenv("SLACK_JAYWAY_URL")
+	if slackUrl == "" {
+		fmt.Println("SLACK_JAYWAY_URL is required")
+		fmt.Println("Check your incoming-webhook at https://api.slack.com/")
 		return
 	}
 
@@ -109,6 +118,7 @@ func nameLoop(nameChan <-chan string) {
 		select {
 		case name = <-nameChan:
 			fmt.Printf("Read name from chan: %s\n", name)
+			slack(fmt.Sprintf("%s is at the office", name))
 		case <-time.After(9 * time.Second):
 			fmt.Println("Timeout name from chan")
 			name = "Unknown"
@@ -169,4 +179,16 @@ func detectFace(mat gocv.Mat) (string, error) {
 		return "", nil
 	}
 	return *output.FaceMatches[0].Face.ExternalImageId, nil
+}
+
+func slack(message string) error {
+	slackUrl := os.Getenv("SLACK_JAYWAY_URL")
+	buf := new(bytes.Buffer)
+	body := map[string]string{
+		"text": message,
+	}
+	json.NewEncoder(buf).Encode(body)
+	resp, err := http.Post(slackUrl, "application/json", buf)
+	fmt.Println(resp, err)
+	return err
 }
