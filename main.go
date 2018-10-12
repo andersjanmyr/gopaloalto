@@ -2,13 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"image"
 	"image/color"
 	"image/png"
+	"io/ioutil"
 	"os"
 	"strconv"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/endpoints"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/rekognition"
 	"gocv.io/x/gocv"
 )
 
@@ -94,6 +100,31 @@ func detectFace(img gocv.Mat) (string, error) {
 	}
 	buffer := new(bytes.Buffer)
 	err = png.Encode(buffer, frame)
+	if err != nil {
+		return "", err
+	}
+
+	ctx := context.Background()
+
+	sess := session.Must(session.NewSession())
+	config := &aws.Config{
+		Region: aws.String(endpoints.UsWest2RegionID),
+	}
+	bytes, err := ioutil.ReadAll(buffer)
+	if err != nil {
+		return "", err
+	}
+	rekognitionService := rekognition.New(sess, config)
+	image := rekognition.Image{Bytes: []byte(bytes)}
+	threshold := 0.7
+	output, err := rekognitionService.SearchFacesByImageWithContext(ctx, &rekognition.SearchFacesByImageInput{
+		Image:              &image,
+		CollectionId:       aws.String("gopaloalto"),
+		FaceMatchThreshold: &threshold,
+	})
+	fmt.Printf("Err: %s\n", err)
+	fmt.Printf("Out: %#v\n", output)
+	os.Exit(1)
 	if err != nil {
 		return "", err
 	}
