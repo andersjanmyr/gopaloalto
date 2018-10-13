@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -178,7 +179,10 @@ func detectFace(mat gocv.Mat) (string, error) {
 	if len(output.FaceMatches) < 1 {
 		return "", nil
 	}
-	return *output.FaceMatches[0].Face.ExternalImageId, nil
+
+	externalID := *output.FaceMatches[0].Face.ExternalImageId
+	name := strings.Replace(externalID, "_", " ", -1)
+	return name, nil
 }
 
 func slack(message string) error {
